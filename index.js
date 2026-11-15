@@ -2,6 +2,7 @@ const { Telegraf, Markup } = require('telegraf');
 const mongoose = require('mongoose');
 const http = require('http');
 require('dotenv').config();
+const design = require('./design');
 
 // 1. Render/Railway Mini-Server
 const port = process.env.PORT || 3000;
@@ -68,6 +69,9 @@ const Config = mongoose.model('Config', configSchema);
 const bot = new Telegraf(process.env.BOT_TOKEN);
 const ADMIN_ID = parseInt(process.env.ADMIN_ID);
 
+// Telegram Premium Custom Emoji va Tugmalar xatoliklariga qarshi himoya
+design.setupCustomEmojiFallback(bot);
+
 let adminState = {};
 
 // 4. Yordamchi funksiyalar
@@ -88,14 +92,12 @@ async function getUnsubscribedChannels(ctx, collectionName = 'channels') {
             const isMember = ['member', 'administrator', 'creator'].includes(member.status);
 
             if (!isMember) {
-                // Agar a'zo bo'lmasa, zayafka yuborganmi tekshiramiz
                 const requestDoc = await Request.findOne({ userId: userId, channelId: ch.channelId.toString() });
                 if (!requestDoc) {
                     unsubscribed.push(ch);
                 }
             }
         } catch (e) {
-            // Agar xato bo'lsa (masalan bot kanalda admin emas), zayafkani bazadan tekshiramiz
             const requestDoc = await Request.findOne({ userId: userId, channelId: ch.channelId.toString() });
             if (!requestDoc) {
                 unsubscribed.push(ch);
@@ -122,22 +124,36 @@ async function sendStart(ctx) {
         );
 
         if (userId === ADMIN_ID) {
-            return ctx.reply("🛠 Admin Panelga xush kelibsiz:", Markup.keyboard([
-                ['📊 Statistika', '📢 Xabar yuborish'],
-                ['➕ Kanal qo\'shish', '🗑 Kanallarni boshqarish'],
-                ['➕ Majbur-2 qo\'shish', '🗑 Majbur-2 boshqarish'],
-                ['🔗 Majburiy Link']
-            ]).resize());
+            return ctx.reply(
+                `👑 <b>KINO CITY | ADMIN BOSHQARUV PANELI</b> 🛠\n\n` +
+                `⚡ <i>Xush kelibsiz, Bosh Admin! Quyidagi menyu orqali botni to'liq boshqarishingiz mumkin:</i>`,
+                {
+                    parse_mode: 'HTML',
+                    ...design.getAdminKeyboard()
+                }
+            );
         }
 
         const unsubbed = await getUnsubscribedChannels(ctx);
 
         if (unsubbed.length === 0) {
-            return ctx.reply(`👋 Xush kelibsiz ${userName}! Marhamat, kino kodini yuboring.`);
+            return ctx.reply(
+                `🎬 <b>KINO CITY | RASMIY BOT</b> 🍿\n\n` +
+                `👋 Assalomu alaykum, <b>${userName}</b>!\n\n` +
+                `✨ <i>Bizning bot orqali eng so'nggi va sara kinolarni yuqori sifatda topishingiz mumkin.</i>\n\n` +
+                `🔢 <b>Marhamat, kino kodini yuboring:</b>`,
+                { parse_mode: 'HTML' }
+            );
         } else {
-            const buttons = unsubbed.map((l) => [Markup.button.url(l.name, l.link)]);
-            buttons.push([Markup.button.callback("✅ Tekshirish", "check_sub")]);
-            return ctx.reply("🔴 Botdan foydalanish uchun quyidagi kanallarga obuna bo'ling yoki so'rov yuboring:", Markup.inlineKeyboard(buttons));
+            return ctx.reply(
+                `✨ <b>KINO CITY | OBUNA TALAB QILINADI</b> ✨\n\n` +
+                `🔴 <i>Botdan foydalanish va filmlarni tomosha qilish uchun quyidagi kanallarga obuna bo'ling yoki so'rov yuboring:</i>\n\n` +
+                `👇 <i>Obuna bo'lgach, pastdagi <b>«⚡ Obunani tekshirish 💎»</b> tugmasini bosing:</i>`,
+                {
+                    parse_mode: 'HTML',
+                    ...design.getSubscriptionKeyboard(unsubbed, 'check_sub', 1)
+                }
+            );
         }
     } catch (e) { console.error("Start Error:", e); }
 }
@@ -160,22 +176,29 @@ bot.on('chat_join_request', async (ctx) => {
 // 6. Obunani tekshirish (Callback)
 bot.action('check_sub', async (ctx) => {
     try {
-        // Avval Telegram'ga javob beramiz (15s timeout oldini olish)
-        await ctx.answerCbQuery();
-        
+        await ctx.answerCbQuery("Tekshirilmoqda... ⏳");
+
         const unsubbed = await getUnsubscribedChannels(ctx, 'channels');
         if (unsubbed.length === 0) {
             try {
-                await ctx.editMessageText("✅ Rahmat! Obuna tasdiqlandi. Endi kod yuborishingiz mumkin.");
+                await ctx.editMessageText(
+                    `💎 <b>TABRIKLAYMIZ!</b> 💎\n\n` +
+                    `✅ <i>Barcha asosiy kanallarga obuna muvaffaqiyatli tasdiqlandi!</i>\n\n` +
+                    `🎬 <b>Endi sevimli kinongiz kodini yuborishingiz mumkin:</b>`,
+                    { parse_mode: 'HTML' }
+                );
             } catch (err) {}
         } else {
-            const buttons = unsubbed.map((l) => [Markup.button.url(l.name, l.link)]);
-            buttons.push([Markup.button.callback("✅ Tekshirish", "check_sub")]);
             try {
-                await ctx.editMessageReplyMarkup({ inline_keyboard: buttons });
+                await ctx.editMessageReplyMarkup(design.getSubscriptionKeyboard(unsubbed, 'check_sub', 1).reply_markup);
             } catch (err) {}
             try {
-                await ctx.telegram.sendMessage(ctx.from.id, "❌ Shartni to'liq bajaring! Barcha kanallarga obuna bo'ling.");
+                await ctx.telegram.sendMessage(
+                    ctx.from.id,
+                    `⚠️ <b>DIQQAT: SHART TO'LIQ BAJARILMADI!</b> ⚠️\n\n` +
+                    `❌ <i>Siz hali barcha homiy kanallarga a'zo bo'lmadingiz. Iltimos, barcha kanallarga obuna bo'ling yoki so'rov yuboring!</i>`,
+                    { parse_mode: 'HTML' }
+                );
             } catch (err) {}
         }
     } catch (e) { console.error("Action error:", e); }
@@ -183,18 +206,19 @@ bot.action('check_sub', async (ctx) => {
 
 bot.action('check_sub_2', async (ctx) => {
     try {
-        // Avval Telegram'ga javob beramiz (15s timeout oldini olish)
-        await ctx.answerCbQuery();
+        await ctx.answerCbQuery("Tekshirilmoqda... ⏳");
 
         const unsubbed1 = await getUnsubscribedChannels(ctx, 'channels');
         if (unsubbed1.length > 0) {
-            const buttons = unsubbed1.map((l) => [Markup.button.url(l.name, l.link)]);
-            buttons.push([Markup.button.callback("✅ Tekshirish", "check_sub")]);
             try {
-                await ctx.editMessageReplyMarkup({ inline_keyboard: buttons });
+                await ctx.editMessageReplyMarkup(design.getSubscriptionKeyboard(unsubbed1, 'check_sub', 1).reply_markup);
             } catch (err) {}
             try {
-                await ctx.telegram.sendMessage(ctx.from.id, "❌ Oldin asosiy kanallarga a'zo bo'ling!");
+                await ctx.telegram.sendMessage(
+                    ctx.from.id,
+                    `⚠️ <b>DIQQAT!</b>\n\n❌ <i>Oldin asosiy kanallarga a'zo bo'ling!</i>`,
+                    { parse_mode: 'HTML' }
+                );
             } catch (err) {}
             return;
         }
@@ -205,26 +229,38 @@ bot.action('check_sub_2', async (ctx) => {
             const link = settings ? settings.mandatoryLink : null;
             try {
                 if (link) {
-                    await ctx.editMessageText(`✅ To'g'ri! Marhamat, kino linki:\n\n${link}`);
+                    await ctx.editMessageText(
+                        `🍿 <b>KOD TASDIQLANDI!</b> 🎬\n\n` +
+                        `✅ <i>Barcha qo'shimcha kanallarga ham a'zo bo'ldingiz!</i>\n\n` +
+                        `🍿 <b>Siz qidirgan film havolasi:</b>\n` +
+                        `👉 <a href="${link}">${link}</a>\n\n` +
+                        `<i>Yoqimli tomosha tilaymiz! 🍿✨</i>`,
+                        {
+                            parse_mode: 'HTML',
+                            ...design.getMovieLinkKeyboard(link)
+                        }
+                    );
                 } else {
-                    await ctx.editMessageText("❌ Xatolik: Admin tomonidan link o'rnatilmagan.");
+                    await ctx.editMessageText("❌ <b>Xatolik:</b> Admin tomonidan link o'rnatilmagan.", { parse_mode: 'HTML' });
                 }
             } catch (err) {}
         } else {
-            const buttons = unsubbed2.map((l) => [Markup.button.url(l.name, l.link)]);
-            buttons.push([Markup.button.callback("✅ Tekshirish", "check_sub_2")]);
             try {
-                await ctx.editMessageReplyMarkup({ inline_keyboard: buttons });
+                await ctx.editMessageReplyMarkup(design.getSubscriptionKeyboard(unsubbed2, 'check_sub_2', 2).reply_markup);
             } catch (err) {}
             try {
-                await ctx.telegram.sendMessage(ctx.from.id, "❌ Shartni to'liq bajaring! Barcha kanallarga obuna bo'ling.");
+                await ctx.telegram.sendMessage(
+                    ctx.from.id,
+                    `⚠️ <b>DIQQAT!</b>\n\n❌ <i>Shartni to'liq bajaring! Barcha Majbur-2 kanallariga obuna bo'ling.</i>`,
+                    { parse_mode: 'HTML' }
+                );
             } catch (err) {}
         }
     } catch (e) { console.error("Sub 2 Action Error:", e); }
 });
 
 // 7. Admin Funksiyalari
-bot.hears('📊 Statistika', async (ctx) => {
+bot.hears([design.BUTTONS.STATS, '📊 Statistika', /statistika/i], async (ctx) => {
     if (ctx.from.id !== ADMIN_ID) return;
 
     const last24h = new Date(Date.now() - 24 * 60 * 60 * 1000);
@@ -233,87 +269,132 @@ bot.hears('📊 Statistika', async (ctx) => {
     const active24h = await User.countDocuments({ lastActive: { $gte: last24h } });
     const blockedCount = await User.countDocuments({ status: 'blocked' });
     const channelsCount = await Channel.countDocuments();
+    const channels2Count = await Channel2.countDocuments();
 
-    ctx.reply(`📊 *Bot statistikasi:*\n\n` +
-        `👤 Jami foydalanuvchilar: ${totalUsers}\n` +
-        `✅ Faol (24s): ${active24h}\n` +
-        `🚫 Bloklaganlar: ${blockedCount}\n` +
-        `📢 Ulangan kanallar: ${channelsCount}`, { parse_mode: 'Markdown' });
+    ctx.reply(
+        `📊 <b>KINO CITY | BOT STATISTIKASI</b> 👑\n\n` +
+        `👥 <b>Jami foydalanuvchilar:</b> <code>${totalUsers.toLocaleString()}</code> ta\n` +
+        `⚡ <b>Faol (so'nggi 24s):</b> <code>${active24h.toLocaleString()}</code> ta\n` +
+        `🚫 <b>Botni bloklaganlar:</b> <code>${blockedCount.toLocaleString()}</code> ta\n` +
+        `📢 <b>Asosiy kanallar:</b> <code>${channelsCount}</code> ta\n` +
+        `🍿 <b>Majbur-2 kanallar:</b> <code>${channels2Count}</code> ta\n\n` +
+        `🕒 <i>Yangilangan: ${new Date().toLocaleTimeString('uz-UZ')}</i>`,
+        { parse_mode: 'HTML' }
+    );
 });
 
-bot.hears('➕ Kanal qo\'shish', (ctx) => {
+bot.hears([design.BUTTONS.ADD_CH, "➕ Kanal qo'shish", /kanal\s*qo['`ʼ]?shish/i], (ctx) => {
     if (ctx.from.id !== ADMIN_ID) return;
     adminState[ctx.from.id] = { step: 'add_ch_id' };
-    ctx.reply("Kanal ID raqamini yuboring (-100...):");
+    ctx.reply(
+        `➕ <b>ASOSIY KANAL QO'SHISH</b> 📢\n\n` +
+        `✍️ <i>Kanal ID raqamini yuboring (masalan: <code>-1001234567890</code>):</i>`,
+        { parse_mode: 'HTML' }
+    );
 });
 
-bot.hears('🗑 Kanallarni boshqarish', async (ctx) => {
+bot.hears([design.BUTTONS.MANAGE_CH, "🗑 Kanallarni boshqarish", /kanallarni\s*boshqarish/i], async (ctx) => {
     if (ctx.from.id !== ADMIN_ID) return;
     const channels = await Channel.find();
     if (channels.length === 0) return ctx.reply("Hech qanday kanal ulanmagan.");
 
     for (const ch of channels) {
-        ctx.reply(`Nomi: ${ch.name}\nID: ${ch.channelId}\nLink: ${ch.link}`,
-            Markup.inlineKeyboard([[Markup.button.callback("❌ O'chirish", `del_${ch._id}`)]]));
+        ctx.reply(
+            `📢 <b>Kanal nomi:</b> ${ch.name}\n` +
+            `🆔 <b>ID:</b> <code>${ch.channelId}</code>\n` +
+            `🔗 <b>Havola:</b> ${ch.link}`,
+            {
+                parse_mode: 'HTML',
+                ...design.getDeleteChannelKeyboard(ch._id, false)
+            }
+        );
     }
 });
 
 bot.action(/^del_(.+)$/, async (ctx) => {
     if (ctx.from.id !== ADMIN_ID) return;
     await Channel.findByIdAndDelete(ctx.match[1]);
-    ctx.answerCbQuery("O'chirildi!");
-    ctx.editMessageText("🗑 Kanal o'chirildi.");
+    await ctx.answerCbQuery("🗑 Kanal o'chirildi!");
+    ctx.editMessageText("🗑 <b>Kanal muvaffaqiyatli o'chirildi!</b>", { parse_mode: 'HTML' });
 });
 
-bot.hears('🔗 Majburiy Link', async (ctx) => {
+bot.hears([design.BUTTONS.MANDATORY_LINK, "🔗 Majburiy Link", /majburiy\s*link/i], async (ctx) => {
     if (ctx.from.id !== ADMIN_ID) return;
     const settings = await Config.findOne({ key: 'settings' });
     const currentLink = settings && settings.mandatoryLink ? settings.mandatoryLink : "O'rnatilmagan";
 
     adminState[ctx.from.id] = { step: 'set_mandatory_link' };
-    ctx.reply(`Hozirgi majburiy link: ${currentLink}\n\nYangi linkni yuboring:`);
+    ctx.reply(
+        `💎 <b>MAJBURIY KINO LINKI</b> 🔗\n\n` +
+        `📌 <b>Hozirgi link:</b> <code>${currentLink}</code>\n\n` +
+        `✍️ <i>Yangi linkni yuboring (https://t.me/...):</i>`,
+        { parse_mode: 'HTML' }
+    );
 });
 
-bot.hears('➕ Majbur-2 qo\'shish', (ctx) => {
+bot.hears([design.BUTTONS.ADD_CH2, "➕ Majbur-2 qo'shish", /majbur-?2\s*qo['`ʼ]?shish/i], (ctx) => {
     if (ctx.from.id !== ADMIN_ID) return;
     adminState[ctx.from.id] = { step: 'add_ch2_id' };
-    ctx.reply("Majbur-2 kanali ID raqamini yuboring (-100...):");
+    ctx.reply(
+        `➕ <b>MAJBUR-2 KANALI QO'SHISH</b> 🍿\n\n` +
+        `✍️ <i>Majbur-2 kanali ID raqamini yuboring (masalan: <code>-1001234567890</code>):</i>`,
+        { parse_mode: 'HTML' }
+    );
 });
 
-bot.hears('🗑 Majbur-2 boshqarish', async (ctx) => {
+bot.hears([design.BUTTONS.MANAGE_CH2, "🗑 Majbur-2 boshqarish", /majbur-?2\s*boshqarish/i], async (ctx) => {
     if (ctx.from.id !== ADMIN_ID) return;
     const channels2 = await Channel2.find();
     if (channels2.length === 0) return ctx.reply("Hech qanday Majbur-2 kanali ulanmagan.");
 
     for (const ch of channels2) {
-        ctx.reply(`Majbur-2: ${ch.name}\nID: ${ch.channelId}\nLink: ${ch.link}`,
-            Markup.inlineKeyboard([[Markup.button.callback("❌ O'chirish", `del2_${ch._id}`)]]));
+        ctx.reply(
+            `🍿 <b>Majbur-2:</b> ${ch.name}\n` +
+            `🆔 <b>ID:</b> <code>${ch.channelId}</code>\n` +
+            `🔗 <b>Havola:</b> ${ch.link}`,
+            {
+                parse_mode: 'HTML',
+                ...design.getDeleteChannelKeyboard(ch._id, true)
+            }
+        );
     }
 });
 
 bot.action(/^del2_(.+)$/, async (ctx) => {
     if (ctx.from.id !== ADMIN_ID) return;
     await Channel2.findByIdAndDelete(ctx.match[1]);
-    ctx.answerCbQuery("O'chirildi!");
-    ctx.editMessageText("🗑 Majbur-2 kanali o'chirildi.");
+    await ctx.answerCbQuery("🗑 Majbur-2 o'chirildi!");
+    ctx.editMessageText("🗑 <b>Majbur-2 kanali muvaffaqiyatli o'chirildi!</b>", { parse_mode: 'HTML' });
 });
 
-bot.hears('📢 Xabar yuborish', (ctx) => {
+bot.hears([design.BUTTONS.BROADCAST, "📢 Xabar yuborish", /xabar\s*yuborish/i], (ctx) => {
     if (ctx.from.id !== ADMIN_ID) return;
-    ctx.reply("Xabar yuborish turini tanlang:", Markup.inlineKeyboard([
-        [Markup.button.callback("📝 Oddiy xabar", "msg_simple")],
-        [Markup.button.callback("🔄 Forward (Uzatish)", "msg_forward")]
-    ]));
+    ctx.reply(
+        `📢 <b>XABAR TARQATISH BO'LIMI</b> 🚀\n\n` +
+        `<i>Quyidagi xabar yuborish turlaridan birini tanlang:</i>`,
+        {
+            parse_mode: 'HTML',
+            ...design.getBroadcastTypeKeyboard()
+        }
+    );
 });
 
 bot.action('msg_simple', ctx => {
     adminState[ctx.from.id] = { step: 'ad_content' };
-    ctx.reply("Reklama xabarini yuboring (matn, rasm, video...):");
+    ctx.reply(
+        `📝 <b>REKLAMA MATNI</b> ✨\n\n` +
+        `<i>Reklama xabarini yuboring (matn, rasm, video...):</i>`,
+        { parse_mode: 'HTML' }
+    );
 });
 
 bot.action('msg_forward', ctx => {
     adminState[ctx.from.id] = { step: 'ad_forward' };
-    ctx.reply("Uzatish (forward) uchun xabarni menga yuboring:");
+    ctx.reply(
+        `🔄 <b>FORWARD XABAR</b> 🚀\n\n` +
+        `<i>Uzatish (forward) uchun xabarni menga yuboring:</i>`,
+        { parse_mode: 'HTML' }
+    );
 });
 
 // 8. Xabarlarni qayta ishlash
@@ -328,16 +409,16 @@ bot.on('message', async (ctx) => {
 
         if (state.step === 'add_ch_id') {
             adminState[userId] = { step: 'add_ch_link', id: text };
-            return ctx.reply("Kanal uchun link yuboring (https://t.me/...):");
+            return ctx.reply("🔗 Kanal uchun havola yuboring (https://t.me/...):");
         }
         if (state.step === 'add_ch_link') {
             adminState[userId] = { step: 'add_ch_name', id: state.id, link: text };
-            return ctx.reply("Tugma uchun nom yuboring (masalan: Kanal 1):");
+            return ctx.reply("✍️ Tugma uchun nom yuboring (masalan: Kino Kanal):");
         }
         if (state.step === 'add_ch_name') {
             await Channel.create({ channelId: state.id, link: state.link, name: text });
             delete adminState[userId];
-            return ctx.reply("✅ Kanal muvaffaqiyatli qo'shildi!");
+            return ctx.reply("✅ <b>Kanal muvaffaqiyatli qo'shildi!</b>", { parse_mode: 'HTML' });
         }
 
         if (state.step === 'set_mandatory_link') {
@@ -347,35 +428,48 @@ bot.on('message', async (ctx) => {
                 { upsert: true, new: true }
             );
             delete adminState[userId];
-            return ctx.reply("✅ Majburiy link yangilandi!");
+            return ctx.reply("✅ <b>Majburiy link muvaffaqiyatli yangilandi!</b>", { parse_mode: 'HTML' });
         }
 
         // Majburiy 2 qo'shish
         if (state.step === 'add_ch2_id') {
             adminState[userId] = { step: 'add_ch2_link', id: text };
-            return ctx.reply("Majbur-2 uchun link yuboring (https://t.me/...):");
+            return ctx.reply("🔗 Majbur-2 uchun havola yuboring (https://t.me/...):");
         }
         if (state.step === 'add_ch2_link') {
             adminState[userId] = { step: 'add_ch2_name', id: state.id, link: text };
-            return ctx.reply("Tugma uchun nom yuboring:");
+            return ctx.reply("✍️ Tugma uchun nom yuboring:");
         }
         if (state.step === 'add_ch2_name') {
             await Channel2.create({ channelId: state.id, link: state.link, name: text });
             delete adminState[userId];
-            return ctx.reply("✅ Majbur-2 kanali muvaffaqiyatli qo'shildi!");
+            return ctx.reply("✅ <b>Majbur-2 kanali muvaffaqiyatli qo'shildi!</b>", { parse_mode: 'HTML' });
         }
 
         if (state.step === 'ad_content') {
             adminState[userId] = { step: 'ad_btn_ask', msg: message };
-            return ctx.reply("Xabarga tugma qo'shilsinmi?", Markup.inlineKeyboard([
-                [Markup.button.callback("✅ Ha", "btn_yes"), Markup.button.callback("❌ Yo'q", "btn_no")]
-            ]));
+            return ctx.reply(
+                `🔘 <b>TUGMA SOZLAMASI</b> ⚡\n\n` +
+                `<i>Xabarga pastki URL tugma qo'shilsinmi?</i>`,
+                {
+                    parse_mode: 'HTML',
+                    ...design.getBroadcastConfirmKeyboard()
+                }
+            );
         }
 
         if (state.step === 'ad_btn_data') {
             const parts = text.split('|');
-            if (parts.length < 2) return ctx.reply("Format xato! Nomi | Link");
-            broadcast(ctx, state.msg.message_id, false, Markup.inlineKeyboard([[Markup.button.url(parts[0].trim(), parts[1].trim())]]));
+            if (parts.length < 2) return ctx.reply("❌ Format xato! Masalan: Kino kanal | https://t.me/kino");
+            const btnName = parts[0].trim();
+            const btnLink = parts[1].trim();
+            const kb = Markup.inlineKeyboard([[
+                design.createUrlButton(btnName, btnLink, {
+                    icon_custom_emoji_id: design.CUSTOM_EMOJIS.CHANNEL,
+                    style: 'primary'
+                })
+            ]]);
+            broadcast(ctx, state.msg.message_id, false, kb);
             delete adminState[userId];
             return;
         }
@@ -391,31 +485,54 @@ bot.on('message', async (ctx) => {
     if (text && !text.startsWith('/')) {
         const unsubbed1 = await getUnsubscribedChannels(ctx, 'channels');
         if (unsubbed1.length > 0) {
-            const buttons = unsubbed1.map((l) => [Markup.button.url(l.name, l.link)]);
-            buttons.push([Markup.button.callback("✅ Tekshirish", "check_sub")]);
-            return ctx.reply("⚠️ Botdan foydalanish uchun kanallarga obuna bo'ling yoki so'rov yuboring:", Markup.inlineKeyboard(buttons));
+            return ctx.reply(
+                `✨ <b>KINO CITY | OBUNA TALAB QILINADI</b> ✨\n\n` +
+                `⚠️ <i>Botdan foydalanish va kino ko'rish uchun quyidagi kanallarga obuna bo'ling:</i>`,
+                {
+                    parse_mode: 'HTML',
+                    ...design.getSubscriptionKeyboard(unsubbed1, 'check_sub', 1)
+                }
+            );
         }
 
         // Agar matn faqat raqamlardan iborat bo'lsa (Kino kodi)
         if (/^\d+$/.test(text)) {
-            // Endi Majbur-2 tekshiramiz
             const unsubbed2 = await getUnsubscribedChannels(ctx, 'channels2');
             if (unsubbed2.length > 0) {
-                const buttons = unsubbed2.map((l) => [Markup.button.url(l.name, l.link)]);
-                buttons.push([Markup.button.callback("✅ Tekshirish", "check_sub_2")]);
-                return ctx.reply("⚠️ Iltimos, quyidagi kanallarimga ham obuna bo'ling!", Markup.inlineKeyboard(buttons));
+                return ctx.reply(
+                    `🍿 <b>QO'SHIMCHA OBUNA TALAB QILINADI</b> 🍿\n\n` +
+                    `⚠️ <i>Kino havolasini ochish uchun quyidagi qo'shimcha kanallarga ham obuna bo'ling:</i>`,
+                    {
+                        parse_mode: 'HTML',
+                        ...design.getSubscriptionKeyboard(unsubbed2, 'check_sub_2', 2)
+                    }
+                );
             }
 
             const settings = await Config.findOne({ key: 'settings' });
             const link = settings ? settings.mandatoryLink : null;
 
             if (link) {
-                ctx.reply(`✅ Kod qabul qilindi. Marhamat, quyidagi link orqali ko'rishingiz mumkin:\n\n${link}`);
+                ctx.reply(
+                    `🍿 <b>KOD QABUL QILINDI!</b> 🎬\n\n` +
+                    `🔢 <b>Kino kodi:</b> <code>${text}</code>\n` +
+                    `✅ <b>Holati:</b> Muvaffaqiyatli topildi!\n\n` +
+                    `🍿 <b>Film havolasi:</b>\n👉 <a href="${link}">${link}</a>\n\n` +
+                    `<i>Yoqimli tomosha tilaymiz! 🍿✨</i>`,
+                    {
+                        parse_mode: 'HTML',
+                        ...design.getMovieLinkKeyboard(link)
+                    }
+                );
             } else {
-                ctx.reply("❌ Xatolik: Admin tomonidan link o'rnatilmagan.");
+                ctx.reply("❌ <b>Xatolik:</b> Admin tomonidan link o'rnatilmagan.", { parse_mode: 'HTML' });
             }
         } else {
-            ctx.reply("❌ Iltimos to'g'ri kodni kiriting (Faqat raqam yuboring).");
+            ctx.reply(
+                `❌ <b>Noto'g'ri format!</b>\n\n` +
+                `<i>Iltimos faqat kino kodini (raqam) yuboring. Masalan: <code>123</code></i>`,
+                { parse_mode: 'HTML' }
+            );
         }
     }
 });
@@ -424,7 +541,7 @@ bot.on('message', async (ctx) => {
 async function broadcast(ctx, msgId, isForward, kb = null) {
     const users = await User.find();
     const total = users.length;
-    ctx.reply(`🚀 ${total} kishiga yuborish boshlandi...`);
+    ctx.reply(`🚀 <b>${total}</b> kishiga xabar yuborish boshlandi...`, { parse_mode: 'HTML' });
 
     let count = 0;
     let blocked = 0;
@@ -445,13 +562,23 @@ async function broadcast(ctx, msgId, isForward, kb = null) {
             }
         }
     }
-    ctx.reply(`✅ Tugatildi!\n✅ Yetkazildi: ${count}\n❌ Bloklagan: ${blocked}`);
+    ctx.reply(
+        `✅ <b>Yuborish yakunlandi!</b>\n\n` +
+        `📬 Yetkazildi: <b>${count}</b> ta\n` +
+        `🚫 Bloklagan: <b>${blocked}</b> ta`,
+        { parse_mode: 'HTML' }
+    );
 }
 
 bot.action('btn_yes', ctx => {
     if (!adminState[ctx.from.id]) return;
     adminState[ctx.from.id].step = 'ad_btn_data';
-    ctx.reply("Tugma formatini yuboring: `Nomi | Link`", { parse_mode: 'Markdown' });
+    ctx.reply(
+        `✍️ <b>Tugma formatini yuboring:</b>\n\n` +
+        `<code>Tugma Nomi | Havola</code>\n\n` +
+        `Masalan: <code>Kino Kanal | https://t.me/kino</code>`,
+        { parse_mode: 'HTML' }
+    );
 });
 
 bot.action('btn_no', ctx => {
@@ -468,7 +595,7 @@ bot.catch((err) => {
 
 // 11. Botni ishga tushirish
 bot.launch()
-    .then(() => console.log("🚀 Bot muvaffaqiyatli ishga tushdi!"))
+    .then(() => console.log("🚀 Kino City bot muvaffaqiyatli ishga tushdi!"))
     .catch((err) => console.error("❌ Bot ishga tushmadi:", err));
 
 process.once('SIGINT', () => bot.stop('SIGINT'));
